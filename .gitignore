@@ -1,4 +1,4 @@
 .idea/
-.env
+*.env
 users.db
 paypal/__pycache__/
