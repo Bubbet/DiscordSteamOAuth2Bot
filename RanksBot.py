@@ -8,6 +8,7 @@ from requests_oauthlib import OAuth2Session
 from paypal.paypal_create import CreateOrder
 from paypal.paypal_capture import CaptureOrder
 from dotenv import load_dotenv
+
 load_dotenv()
 BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 OAUTH2_CLIENT_ID = os.getenv('OAUTH2_CLIENT_ID')
@@ -19,6 +20,35 @@ AUTHORIZATION_BASE_URL = API_BASE_URL + '/oauth2/authorize'
 TOKEN_URL = API_BASE_URL + '/oauth2/token'
 
 
+class Sqlinterface:
+    def __init__(self):
+        create_users_table = '''CREATE TABLE IF NOT EXISTS `Users` (
+                `DiscordID`	INTEGER UNIQUE,
+                `SteamID`	INTEGER UNIQUE,
+                `DiscordName`	TEXT,
+                `SteamName`	TEXT,
+                `DonationAmount`	INTEGER,
+                `DonationDate`	TEXT,
+                PRIMARY KEY(`DiscordID`,`SteamID`)
+            );'''
+        with sqlite3.connect('users.db') as sql:
+            sql.execute(create_users_table)
+
+    def adduser(self, steam, user):
+        select_statement = 'SELECT DiscordID FROM Users WHERE DiscordID = ?'
+        insert_statement = 'INSERT INTO Users VALUES (?,?,?,?,?,?)'
+        with sqlite3.connect('users.db') as sql:
+            if not sql.execute(select_statement, (user["id"],)).fetchone():
+                sql.execute(insert_statement, [
+                    user["id"], steam["id"], f'{user["username"]}#{user["discriminator"]}', steam["name"], 0,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+
+    def getsteamid(self, discordID):
+        select_statement = 'SELECT SteamID, SteamName FROM Users WHERE DiscordID = ?'
+        with sqlite3.connect('users.db') as sql:
+            return sql.execute(select_statement, (discordID,)).fetchone()
+
+
 class DiscordBot(Thread):
     def __init__(self):
         Thread.__init__(self)
@@ -28,25 +58,49 @@ class DiscordBot(Thread):
         @self.bot.event
         async def on_ready():
             self.guild = bot.guilds[0]
+            self.channel = self.guild.get_channel('699326453694857226')
+            # todo replace with proper method to get channel
             guild_id = os.getenv('DISCORD_GUILD_ID')
             for guild in bot.guilds:
                 if guild_id and guild.id == int(guild_id):
                     self.guild = guild
             print(f'{self.bot.user.name} has connected to {self.guild}!')
 
-        @self.bot.command(name='adduser')
+        @self.bot.command()
         async def adduser(ctx, user=None):
-            author = None
-            if user is not None:
-                user = user.replace('<@!', '')
-                user = user.replace('>', '')
-                user = int(user)
-                author = ctx.guild.get_member(user_id=user)
-            else:
-                author = ctx.author
-            await self.add(author.id)
+            member = await self.find_member(ctx=ctx, user=user)
+            if member:
+                await self.add(member.id)
+
+        @self.bot.command()
+        async def whois(ctx, user=None, steam=None):
+            member = await self.find_member(ctx=ctx, user=user)
+            steam = sqlinterface.getsteamid(member.id)
+            await ctx.send(f'{member.name}\'s SteamID is {steam[0]} and Steam name at time of OAuth2 is {steam[1]}')
 
         self.start()
+
+    async def find_member(self, ctx=None, user=''):
+        # why i should even have to do this and its not in the api who knows.
+        """Finds a member in the guild using partial name or id"""
+        if ctx is None:
+            ctx = {'guild': self.bot.guild}
+        if user is not None:
+            if user.startswith('<@!'):
+                user = user[len('<@!'):-1]
+            try:
+                user = int(user)
+                user = ctx.guild.get_member(user_id=user)
+            except(TypeError, ValueError):
+                for member in ctx.guild.members:
+                    if member.name.find(user):
+                        user = member
+                        break
+            return user
+        else:
+            if ctx.author:
+                return ctx.author
+        return
 
     async def add(self, id):
         user = self.guild.get_member(user_id=int(id))
@@ -62,29 +116,8 @@ class DiscordBot(Thread):
         self.bot.run(BOT_TOKEN)
 
 
-def write_to_moddata(steam, user):
-    sql = sqlite3.connect('users.db')
-    create_users_table = '''CREATE TABLE IF NOT EXISTS `Users` (
-        `DiscordID`	INTEGER UNIQUE,
-        `SteamID`	INTEGER UNIQUE,
-        `DiscordName`	TEXT,
-        `SteamName`	TEXT,
-        `DonationAmount`	INTEGER,
-        `DonationDate`	TEXT,
-        PRIMARY KEY(`DiscordID`,`SteamID`)
-    );'''
-    select_statement = 'SELECT DiscordID FROM Users WHERE DiscordID = ?'
-    insert_statement = 'INSERT INTO Users VALUES (?,?,?,?,?,?)'
-    with sql:
-        sql.execute(create_users_table)
-        with sql:
-            if not sql.execute(select_statement, (user["id"],)).fetchone():
-                sql.execute(insert_statement, [
-                user["id"], steam["id"], f'{user["username"]}#{user["discriminator"]}', steam["name"], 0,
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
-
-
-discordbot = DiscordBot()
+sqlinterface = None
+discordbot = None
 app = Flask(__name__)
 app.debug = True
 app.config['SECRET_KEY'] = OAUTH2_CLIENT_SECRET
@@ -142,8 +175,9 @@ def callback():
     connections = discord.get(API_BASE_URL + '/users/@me/connections').json()
     for entry in connections:
         if entry['type'] == 'steam':
-            write_to_moddata(entry, user)
+            sqlinterface.adduser(entry, user)
     return redirect(os.getenv('CALLBACK_REDIRECT', url_for('.paypalbutton')))
+
 
 @app.route('/addrank')
 def addrank():
@@ -223,4 +257,6 @@ def paypalbutton():
 
 
 if __name__ == '__main__':
+    sqlinterface = Sqlinterface()
+    discordbot = DiscordBot()
     app.run()
