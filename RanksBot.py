@@ -1,5 +1,4 @@
-import os
-import sqlite3
+import os, sqlite3
 from datetime import datetime
 from threading import Thread
 from discord.ext import commands
@@ -27,8 +26,9 @@ class Sqlinterface:
                 `SteamID`	INTEGER UNIQUE,
                 `DiscordName`	TEXT,
                 `SteamName`	TEXT,
-                `DonationAmount`	INTEGER,
+                `DonationPackage`	TEXT,
                 `DonationDate`	TEXT,
+                `DonationOrderID` TEXT,
                 PRIMARY KEY(`DiscordID`,`SteamID`)
             );'''
         with sqlite3.connect('users.db') as sql:
@@ -36,12 +36,12 @@ class Sqlinterface:
 
     def adduser(self, steam, user):
         select_statement = 'SELECT DiscordID FROM Users WHERE DiscordID = ?'
-        insert_statement = 'INSERT INTO Users VALUES (?,?,?,?,?,?)'
+        insert_statement = 'INSERT INTO Users VALUES (?,?,?,?,?,?,?)'
         with sqlite3.connect('users.db') as sql:
             if not sql.execute(select_statement, (user["id"],)).fetchone():
                 sql.execute(insert_statement, [
-                    user["id"], steam["id"], f'{user["username"]}#{user["discriminator"]}', steam["name"], 0,
-                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+                    user["id"], steam["id"], f'{user["username"]}#{user["discriminator"]}', steam["name"], 'None',
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S")], '')
 
     def getsteamid(self, discordID):
         select_statement = 'SELECT SteamID, SteamName FROM Users WHERE DiscordID = ?'
@@ -116,8 +116,12 @@ class DiscordBot(Thread):
         self.bot.run(BOT_TOKEN)
 
 
-sqlinterface = None
-discordbot = None
+try:
+    var = os.environ['BOTRUNNING']
+    sqlinterface = Sqlinterface()
+    discordbot = DiscordBot()
+except KeyError:
+    os.environ['BOTRUNNING'] = 'True'
 app = Flask(__name__)
 app.debug = True
 app.config['SECRET_KEY'] = OAUTH2_CLIENT_SECRET
@@ -256,7 +260,4 @@ def paypalbutton():
     return button
 
 
-if __name__ == '__main__':
-    sqlinterface = Sqlinterface()
-    discordbot = DiscordBot()
-    app.run()
+app.run()

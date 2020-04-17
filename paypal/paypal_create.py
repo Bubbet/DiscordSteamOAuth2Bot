@@ -27,7 +27,7 @@ class CreateOrder(PayPalClient):
 
         return response
 
-        """Setting up the JSON request body for creating the order. Set the intent in the
+    """Setting up the JSON request body for creating the order. Set the intent in the
     request body to "CAPTURE" for capture intent flow."""
 
     @staticmethod
