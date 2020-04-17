@@ -1,19 +1,57 @@
-import os, sqlite3
+import os, sqlite3, json
+from pathlib import Path
 from datetime import datetime
 from threading import Thread
 from discord.ext import commands
-from flask import Flask, session, redirect, request, url_for, jsonify, Response, current_app, Request
+from flask import Flask, session, redirect, request, url_for, jsonify, Response
 from requests_oauthlib import OAuth2Session
 from paypal.paypal_create import CreateOrder
 from paypal.paypal_capture import CaptureOrder
-from dotenv import load_dotenv
 
-load_dotenv()
-BOT_TOKEN = os.getenv('DISCORD_BOT_TOKEN')
-OAUTH2_CLIENT_ID = os.getenv('OAUTH2_CLIENT_ID')
-OAUTH2_CLIENT_SECRET = os.getenv('OAUTH2_CLIENT_SECRET')
-PAYPAL_CLIENT_ID = os.getenv('PAYPAL_ID')
 
+class Settings:
+    def __setitem__(self, key, value):
+        self.config[key] = value
+
+    def __getitem__(self, item):
+        try:
+            return self.config[item]
+        except KeyError:
+            return None
+
+    def __init__(self):
+        try:
+            with open('settings.json') as file:
+                self.config = json.load(file)
+        except IOError:
+            self.config = {}
+        self.getfromuser()
+        self.save()
+
+    def getfromuser(self):
+        """List of values used in the script and their description, gathered by the loop."""
+        values = {'discord_client_id': 'Discord Client ID',
+                  'discord_client_secret': 'Discord Client Secret',
+                  'discord_bot_token': 'Discord Bot Token',
+                  'paypal_id': 'PayPal ID',
+                  'paypal_secret': 'PayPal Secret',
+                  'paypal_email': 'PayPal Email',
+                  'discord_guild_id': 'Discord server\'s guild ID',
+                  'discord_channel_id': 'Discord channel ID in your guild',
+                  'callback_redirect': 'Callback Url - Use /addrank if you didn\'t want to use PayPal or blank if you wanted to use the internal page'}
+        for key, value in values.items():
+            if not self[key]:
+                self[key] = input(f'Enter your {value}:')
+
+    def save(self):
+        try:
+            with open('settings.json', 'w') as file:
+                json.dump(self.config, file, indent=2)
+        except IOError as e:
+            print(f'Error saving config. Exception: {e}')
+
+
+settings = Settings()
 API_BASE_URL = os.environ.get('API_BASE_URL', 'https://discordapp.com/api')
 AUTHORIZATION_BASE_URL = API_BASE_URL + '/oauth2/authorize'
 TOKEN_URL = API_BASE_URL + '/oauth2/token'
@@ -58,9 +96,9 @@ class DiscordBot(Thread):
         @self.bot.event
         async def on_ready():
             self.guild = bot.guilds[0]
-            self.channel = self.guild.get_channel('699326453694857226')
+            self.channel = self.guild.get_channel(settings['discord_channel_id'])
             # todo replace with proper method to get channel
-            guild_id = os.getenv('DISCORD_GUILD_ID')
+            guild_id = settings['discord_guild_id']
             for guild in bot.guilds:
                 if guild_id and guild.id == int(guild_id):
                     self.guild = guild
@@ -103,7 +141,9 @@ class DiscordBot(Thread):
         return
 
     async def add(self, id):
+        steam = sqlinterface.getsteamid(id)
         user = self.guild.get_member(user_id=int(id))
+        await self.channel.send(f'Thank you for donating, {user.name}.')
         await user.create_dm()
         await user.dm_channel.send(
             f'Thank you for donating, {user.name}.'
@@ -113,7 +153,7 @@ class DiscordBot(Thread):
         self.bot.loop.create_task(self.add(id))
 
     def run(self):
-        self.bot.run(BOT_TOKEN)
+        self.bot.run(settings['discord_bot_token'])
 
 
 try:
@@ -124,7 +164,7 @@ except KeyError:
     os.environ['BOTRUNNING'] = 'True'
 app = Flask(__name__)
 app.debug = True
-app.config['SECRET_KEY'] = OAUTH2_CLIENT_SECRET
+app.config['SECRET_KEY'] = settings['discord_client_secret']
 
 
 def token_updater(token):
@@ -136,14 +176,14 @@ def make_session(token=None, state=None, scope=None):
     if 'http://' in oauth2_redirect_uri:
         os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = 'true'
     return OAuth2Session(
-        client_id=OAUTH2_CLIENT_ID,
+        client_id=settings['discord_client_id'],
         token=token,
         state=state,
         scope=scope,
         redirect_uri=oauth2_redirect_uri,
         auto_refresh_kwargs={
-            'client_id': OAUTH2_CLIENT_ID,
-            'client_secret': OAUTH2_CLIENT_SECRET,
+            'client_id': settings['discord_client_id'],
+            'client_secret': settings['discord_client_secret'],
         },
         auto_refresh_url=TOKEN_URL,
         token_updater=token_updater)
@@ -172,7 +212,7 @@ def callback():
     discord = make_session(state=session.get('oauth2_state'))
     token = discord.fetch_token(
         TOKEN_URL,
-        client_secret=OAUTH2_CLIENT_SECRET,
+        client_secret=settings['discord_client_secret'],
         authorization_response=request.url)
     session['oauth2_token'] = token
     user = discord.get(API_BASE_URL + '/users/@me').json()
@@ -180,13 +220,16 @@ def callback():
     for entry in connections:
         if entry['type'] == 'steam':
             sqlinterface.adduser(entry, user)
-    return redirect(os.getenv('CALLBACK_REDIRECT', url_for('.paypalbutton')))
+    if settings['callback_redirect']:
+        return redirect(settings['callback_redirect'])
+    else:
+        return redirect(url_for('.paypalbutton'))
 
 
 @app.route('/addrank')
 def addrank():
     '''Used when paypal is disabled and CALLBACK_REDIRECT is set to this url'''
-    if os.getenv('CALLBACK_REDIRECT') != url_for('.addrank'):
+    if settings['callback_redirect'] != url_for('.addrank'):
         return '<p>Paypal is Enabled</p>'
     discord = make_session(token=session.get('oauth2_token'))
     user = discord.get(API_BASE_URL + '/users/@me').json()
@@ -197,13 +240,13 @@ def addrank():
 # PayPal
 @app.route('/create-paypal-transaction', methods=['GET', 'POST'])
 def createtransaction():
-    order = CreateOrder().create_order(debug=True)
+    order = CreateOrder(settings['paypal_id'], settings['paypal_secret']).create_order(debug=True)
     return jsonify({'orderID': order.result.id})
 
 
 @app.route('/capture-paypal-transaction/<orderID>')
 def capturetransaction(orderID):
-    response = CaptureOrder().capture_order(orderID, debug=True)
+    response = CaptureOrder(settings['paypal_id'], settings['paypal_secret']).capture_order(orderID, debug=True)
     if response.status_code == 201:
         discord = make_session(token=session.get('oauth2_token'))
         user = discord.get(API_BASE_URL + '/users/@me').json()
@@ -213,7 +256,6 @@ def capturetransaction(orderID):
 
 @app.route('/paypalbutton')
 def paypalbutton():
-    global PAYPAL_CLIENT_ID
     order = '''
             {createOrder: function() {
               return fetch('/create-paypal-transaction', {
@@ -247,7 +289,7 @@ def paypalbutton():
 
             <body>
                 <script
-                    src="https://www.paypal.com/sdk/js?client-id={PAYPAL_CLIENT_ID}"> // Required. Replace SB_CLIENT_ID with your sandbox client ID.
+                    src="https://www.paypal.com/sdk/js?client-id={settings['paypal_id']}"> // Required. Replace SB_CLIENT_ID with your sandbox client ID.
                 </script>
 
                 <div id="paypal-button-container"></div>

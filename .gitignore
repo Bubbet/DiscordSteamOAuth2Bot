@@ -2,3 +2,4 @@
 *.env
 users.db
 paypal/__pycache__/
+settings.json
