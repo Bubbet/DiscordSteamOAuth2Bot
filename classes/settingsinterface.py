@@ -28,7 +28,8 @@ class Settings:
                   'discord_client_secret': 'Discord Client Secret',
                   'discord_bot_token': 'Discord Bot Token',
                   'main_url': 'Url to be used before redirect',
-                  'linked_template': 'Path to html file for link successful page (none for using default)'}
+                  'linked_template': 'Path to html file for link successful page (none for using default)',
+                  'enable_link_command': 'True to enable the steam link command (which can have user error) or False'}
         for key, value in values.items():
             if not self[key]:
                 self[key] = input(f'Enter your {value}:')

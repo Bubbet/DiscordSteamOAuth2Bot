@@ -13,13 +13,31 @@ class DiscordBot(Thread):
 
         @self.bot.command(name="refresh", aliases=["refreshranks"])
         async def refresh_ranks(ctx):
+            """Used to update your ranks in-game.
+            Use this command then reconnect to the Avorion server.
+            Make sure you've authenticated the OAuth2 first."""
             out = self.add_ranks_from_roles(ctx.author.id, ctx.author.roles)
             if out:
                 await ctx.send(out)
 
+        @self.bot.command(name="linksteam")
+        async def link_steam(ctx, steam_id):
+            """Enter your steam id 64, if you put the wrong id in your ranks won't work.
+            You are better off using the OAuth2 web link."""
+            entry = {"id": int(steam_id), "name": steam_id}
+            user = {"id": ctx.author.id,
+                    "username": ctx.author.name,
+                    "discriminator": ctx.author.discriminator,
+                    "roles": ctx.author.roles}
+            self.sql.adduser(entry, user)
+            await self.update_user(entry, user)
+            await ctx.send(f"Linked Steam Account.")
+
         @self.bot.command(name="setrole")
         @commands.has_guild_permissions(administrator=True)
         async def set_role(ctx, discord_role=None, ranks_rank=None):
+            """Sets the discord role to the ranks rank.
+            Usage: Discord_role Exact_rank_name"""
             if not discord_role or not ranks_rank:
                 message = "Missing"
                 if not discord_role:
@@ -45,12 +63,15 @@ class DiscordBot(Thread):
         @self.bot.command(name="setchannel")
         @commands.has_guild_permissions(administrator=True)
         async def set_channel(ctx):
+            """Sets the current channel to the default information channel for the bot."""
             self.sql.set_default_channel(ctx.guild.id, ctx.channel.id)
             await ctx.send(f"Set default response channel to {ctx.channel.mention}")
 
         @self.bot.command(name="addrcon")
         @commands.has_guild_permissions(administrator=True)
         async def add_rcon(ctx, ip_address=None, port=None, password=None, nickname=None):
+            """Used to add a rcon address to the database.
+            Usage: ip_address, port, password, nickname(optional)"""
             await ctx.message.delete()
             if not ip_address or not port or not password:
                 message = "Missing"
@@ -77,6 +98,8 @@ class DiscordBot(Thread):
         @self.bot.command(name="removercon")
         @commands.has_guild_permissions(administrator=True)
         async def remove_rcon(ctx, ip_address=None):
+            """Removes all rcons with the ip from the database.
+            Usage: ip_address"""
             if not ip_address:
                 return await ctx.send("Missing IP address.")
             self.sql.removercon(ctx.guild.id, ip_address)
@@ -85,6 +108,7 @@ class DiscordBot(Thread):
         @self.bot.command(name="listrcons", aliases=["listrcon"])
         @commands.has_guild_permissions(administrator=True)
         async def list_rcons(ctx):
+            """Prints the stored rcon servers for this guild."""
             message = "This guild has the following rcon addresses and ports:\n"
             for rcon in self.sql.listrcons(ctx.guild.id):
                 message += f"{rcon[0]}:{rcon[1]}, {rcon[3]};\n"
@@ -93,6 +117,7 @@ class DiscordBot(Thread):
         @self.bot.command(name="activercons")
         @commands.has_guild_permissions(administrator=True)
         async def active_rcons(ctx):
+            """Prints the running rcon servers for this guild."""
             message = "This guild has the following rcons active:\n"
             for rcon in self.guild_rcons[ctx.guild.id]:
                 if rcon.active:
@@ -102,6 +127,7 @@ class DiscordBot(Thread):
         @self.bot.command(name="reconnectrcons")
         @commands.has_guild_permissions(administrator=True)
         async def reconnect_rcons(ctx):
+            """Forces a reconnect of the rcon servers for this guild."""
             message = "Attempting the reconnection of these rcons:\n"
             for rcon in self.guild_rcons[ctx.guild.id]:
                 if not rcon.getstatus():
@@ -112,6 +138,7 @@ class DiscordBot(Thread):
         @self.bot.command(name="broadcastrcon", aliases=['brcon'])
         @commands.has_guild_permissions(administrator=True)
         async def broadcast_rcons(ctx, *args):
+            """Standard rcon command issuing, except it goes to every server attached to the guild."""
             message = "Responses from rcons follow:\n"
             message += self.broadcast(ctx.guild.id, ' '.join(args))
             for text in [message[ind:ind + 2000] for ind in range(0, len(message), 2000)]:
@@ -186,7 +213,9 @@ class DiscordBot(Thread):
 
     async def update_user(self, steam, user):
         """From oauth, contains info sent to sql"""
-        self.add_ranks_from_roles(user.id, self.bot.get_user(user.id).roles)
+        did = type(user) is dict and user["id"] or user.id
+        for guild in self.bot.guilds:
+            self.add_ranks_from_roles(did, guild.get_member(did).roles)
 
     def add_ranks_from_roles(self, id, roles):
         """List of discord roles, use id to find steamid and give roles"""

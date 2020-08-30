@@ -5,3 +5,4 @@ paypal/__pycache__/
 settings.json
 venv/
 classes/__pycache__/
+db.db
